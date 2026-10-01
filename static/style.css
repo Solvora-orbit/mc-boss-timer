@@ -1,0 +1,219 @@
+/* MC Boss 计时器 - 深色游戏风界面 */
+:root {
+  --bg: #15181e;
+  --panel: #1e232c;
+  --panel-border: #2e3542;
+  --text: #e6e9ef;
+  --text-dim: #8b93a3;
+  --green: #4caf50;
+  --green-dark: #2e7d32;
+  --orange: #ff9800;
+  --red: #e53935;
+  --blue: #42a5f5;
+  --radius: 10px;
+  font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 22px;
+  background: var(--panel);
+  border-bottom: 2px solid var(--panel-border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.header-left { display: flex; align-items: center; gap: 12px; }
+h1 { font-size: 20px; }
+
+.conn {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+}
+.conn.online { background: rgba(76,175,80,.15); color: var(--green); }
+.conn.offline { background: rgba(229,57,53,.15); color: var(--red); }
+
+.header-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.lan-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: Consolas, monospace;
+}
+
+.btn {
+  background: #2a3140;
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: filter .15s;
+}
+.btn:hover { filter: brightness(1.2); }
+.btn.primary { background: var(--green-dark); border-color: var(--green); }
+.btn.danger { background: #7f2220; border-color: var(--red); }
+.btn.small { padding: 4px 10px; font-size: 12px; }
+
+main { padding: 22px; max-width: 1200px; margin: 0 auto; }
+
+.boss-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 16px;
+}
+
+.boss-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color .3s;
+}
+
+.boss-card.status-possible { border-color: var(--orange); box-shadow: 0 0 12px rgba(255,152,0,.25); }
+.boss-card.status-respawned { border-color: var(--green); box-shadow: 0 0 12px rgba(76,175,80,.25); }
+
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.boss-name { font-size: 17px; font-weight: bold; }
+
+.status-badge {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.status-idle { background: rgba(139,147,163,.15); color: var(--text-dim); }
+.status-waiting { background: rgba(66,165,245,.15); color: var(--blue); }
+.status-possible { background: rgba(255,152,0,.18); color: var(--orange); }
+.status-respawned { background: rgba(76,175,80,.18); color: var(--green); }
+
+.countdown {
+  font-size: 30px;
+  font-weight: bold;
+  font-family: Consolas, monospace;
+  text-align: center;
+  padding: 6px 0;
+}
+.countdown.sub {
+  font-size: 15px;
+  color: var(--text-dim);
+  padding: 0;
+}
+.countdown.warn { color: var(--orange); }
+.countdown.done { color: var(--green); }
+
+.respawn-clock {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.boss-meta { font-size: 13px; color: var(--text-dim); line-height: 1.7; }
+.boss-meta b { color: var(--text); font-weight: normal; }
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+}
+.card-actions .btn { flex: 1; }
+
+.empty-tip {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 80px 0;
+  font-size: 15px;
+}
+
+/* 弹窗 */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.modal-box {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 22px;
+  width: 100%;
+  max-width: 460px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.modal-box.small { max-width: 380px; }
+.modal-box h2 { font-size: 17px; margin-bottom: 16px; }
+
+.modal-box label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.modal-box input[type="text"],
+.modal-box input[type="number"],
+.modal-box input[type="datetime-local"],
+.modal-box textarea {
+  width: 100%;
+  margin-top: 5px;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.modal-box input:focus, .modal-box textarea:focus {
+  outline: none;
+  border-color: var(--green);
+}
+
+.radio-row { display: flex; gap: 18px; margin-bottom: 12px; }
+.radio-row .radio, .radio-col .radio {
+  color: var(--text);
+  margin-bottom: 0;
+  cursor: pointer;
+}
+.radio-col { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.radio input { margin-right: 6px; }
+
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.hidden { display: none !important; }
+
+#kill-custom-time { margin-bottom: 12px; }

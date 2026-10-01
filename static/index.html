@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MC Boss 计时器</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>⛏ MC Boss 计时器</h1>
+      <span id="conn-status" class="conn online">已连接</span>
+    </div>
+    <div class="header-right">
+      <span id="lan-hint" class="lan-hint" title="把这个地址发给局域网内的队友"></span>
+      <button id="btn-add" class="btn primary">＋ 添加 Boss</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="boss-list" class="boss-list"></div>
+    <div id="empty-tip" class="empty-tip hidden">
+      <p>还没有 Boss，点击右上角「添加 Boss」开始吧</p>
+    </div>
+  </main>
+
+  <!-- 新增/编辑 Boss 弹窗 -->
+  <div id="boss-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2 id="boss-modal-title">添加 Boss</h2>
+      <form id="boss-form">
+        <label>Boss 名称 *
+          <input type="text" id="f-name" maxlength="50" placeholder="如：末影龙、凋灵" required>
+        </label>
+
+        <label>复活时间模式</label>
+        <div class="radio-row">
+          <label class="radio"><input type="radio" name="f-mode" value="fixed" checked> 固定间隔</label>
+          <label class="radio"><input type="radio" name="f-mode" value="range"> 复活区间</label>
+        </div>
+
+        <div id="mode-fixed">
+          <label>复活间隔（分钟）*
+            <input type="number" id="f-minutes" min="0.5" step="0.5" placeholder="如：60">
+          </label>
+        </div>
+
+        <div id="mode-range" class="hidden">
+          <div class="two-col">
+            <label>最早（分钟）*
+              <input type="number" id="f-range-min" min="0.5" step="0.5" placeholder="30">
+            </label>
+            <label>最晚（分钟）*
+              <input type="number" id="f-range-max" min="0.5" step="0.5" placeholder="45">
+            </label>
+          </div>
+        </div>
+
+        <label>出生位置 / 坐标（可选）
+          <input type="text" id="f-location" maxlength="200" placeholder="如：主世界 -100 64 200">
+        </label>
+        <label>掉落物（可选）
+          <input type="text" id="f-drops" maxlength="500" placeholder="如：龙蛋、龙首">
+        </label>
+        <label>备注（可选）
+          <textarea id="f-notes" maxlength="1000" rows="2" placeholder="蹲守注意事项等"></textarea>
+        </label>
+
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close>取消</button>
+          <button type="submit" class="btn primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 击杀确认弹窗 -->
+  <div id="kill-modal" class="modal hidden">
+    <div class="modal-box small">
+      <h2>标记击杀：<span id="kill-boss-name"></span></h2>
+      <div class="radio-col">
+        <label class="radio"><input type="radio" name="kill-time" value="now" checked> 刚刚击杀（当前时间）</label>
+        <label class="radio"><input type="radio" name="kill-time" value="custom"> 补录击杀时间</label>
+      </div>
+      <input type="datetime-local" id="kill-custom-time" class="hidden">
+      <div class="modal-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="button" id="btn-kill-confirm" class="btn danger">确认击杀</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
