@@ -47,8 +47,8 @@ async function fetchState() {
     bosses = data.bosses;
     $("#conn-status").textContent = "已连接";
     $("#conn-status").className = "conn online";
-    const ip = (data.lan_ips && data.lan_ips[0]) || "本机IP";
-    $("#lan-hint").textContent = `队友访问: http://${ip}:${data.port}`;
+    const ips = (data.lan_ips && data.lan_ips.length ? data.lan_ips : ["本机IP"]);
+    $("#lan-hint").textContent = `队友访问: ${ips.map((ip) => `http://${ip}:${data.port}`).join("　或　")}`;
     render();
   } catch (e) {
     $("#conn-status").textContent = "连接断开，重试中…";

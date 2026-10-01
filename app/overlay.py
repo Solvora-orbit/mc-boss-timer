@@ -67,7 +67,12 @@ def validate_base_url(url: str) -> str | None:
 
 
 def _host_is_lan(host: str) -> bool:
-    """主机名（或 IP 字面量）必须解析到环回/私网/链路本地地址。"""
+    """主机名（或 IP 字面量）必须解析到允许的组网地址段。
+
+    除常规局域网外，也放行各类虚拟组网工具的网段：
+    蒲公英(172.16.x)、ZeroTier(10.x/192.168.191.x) 落在私网段；
+    Tailscale 等用 CGNAT 100.64/10；Hamachi 用 25/8；Radmin VPN 用 26/8。
+    """
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
@@ -75,7 +80,25 @@ def _host_is_lan(host: str) -> bool:
             ip = ipaddress.ip_address(socket.gethostbyname(host))
         except (OSError, ValueError):
             return False
-    return ip.is_loopback or ip.is_private or ip.is_link_local
+    if ip.version == 6:
+        return ip.is_loopback or ip.is_link_local or ip.is_private
+    return any(ip in net for net in _ALLOWED_V4_NETS)
+
+
+# 显式允许的 IPv4 目标段：常规局域网 + 常见虚拟组网工具
+_ALLOWED_V4_NETS = [
+    ipaddress.ip_network(n)
+    for n in (
+        "127.0.0.0/8",        # 环回
+        "10.0.0.0/8",         # 私网（ZeroTier 等）
+        "172.16.0.0/12",      # 私网（蒲公英等）
+        "192.168.0.0/16",     # 私网
+        "169.254.0.0/16",     # 链路本地
+        "100.64.0.0/10",      # CGNAT（Tailscale 等）
+        "25.0.0.0/8",         # Hamachi
+        "26.0.0.0/8",         # Radmin VPN
+    )
+]
 
 
 class _LANRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -306,7 +329,7 @@ class Overlay:
                          relief="flat", font=self.font, width=24)
         entry.insert(0, self.base_url)
         entry.grid(row=0, column=1, pady=2)
-        tk.Label(win, text="仅支持局域网/本机地址\n如 http://192.168.1.5:8000",
+        tk.Label(win, text="支持局域网/虚拟组网地址\n如 http://192.168.1.5:8000 或蒲公英 IP",
                  bg=C["panel"], fg=C["dim"], font=self.small,
                  justify="left").grid(row=1, column=0, columnspan=2, sticky="w")
 
