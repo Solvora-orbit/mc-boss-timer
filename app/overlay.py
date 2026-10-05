@@ -43,6 +43,11 @@ def _fmt(seconds: float | None) -> str:
     return f"{'+' if neg else ''}{h:02d}:{m:02d}:{s:02d}"
 
 
+def _blink_color(t: float, base: str) -> str:
+    """最后 60 秒的红色闪烁：按整秒交替深浅。"""
+    return "#ef5350" if int(t) % 2 == 0 else "#8c2f2d"
+
+
 class Overlay:
     def __init__(self, base_url: str, is_host: bool):
         # 高 DPI 屏幕下让 tkinter 使用真实像素，保证框选区域坐标与截屏一致
@@ -70,14 +75,20 @@ class Overlay:
         self.root.configure(bg=C["border"])
         self.root.overrideredirect(True)      # 无边框
         self.root.attributes("-topmost", True)
-        self.root.attributes("-alpha", 0.92)
-        self.root.geometry("+80+80")
+        # 恢复上次的位置/透明度（配置持久化，重开软件不用重摆）
+        ov = settings.load()["overlay"]
+        self.root.attributes("-alpha", float(ov.get("alpha", 0.92)))
+        self.root.geometry(f"+{int(ov.get('x', 80))}+{int(ov.get('y', 80))}")
+        self.collapsed = bool(ov.get("collapsed", False))
 
         self.font = tkfont.Font(family="Microsoft YaHei", size=10)
         self.mono = tkfont.Font(family="Consolas", size=11, weight="bold")
         self.small = tkfont.Font(family="Microsoft YaHei", size=9)
 
         self._build_ui()
+        if self.collapsed:      # 恢复折叠状态
+            self.rows_frame.pack_forget()
+            self.status_bar.pack_forget()
         self._rebuild_rows()   # 初始空列表也要显示提示文案
         self._bind_drag()
 
@@ -106,6 +117,10 @@ class Overlay:
                                    font=self.font, padx=5, cursor="hand2")
         self.ocr_toggle.pack(side="right")
         self.ocr_toggle.bind("<Button-1>", lambda e: self._toggle_ocr())
+        self.scan_btn = tk.Label(bar, text="🔍", bg=C["panel"], fg=C["dim"],
+                                 font=self.font, padx=5, cursor="hand2")
+        self.scan_btn.pack(side="right")
+        self.scan_btn.bind("<Button-1>", lambda e: self._manual_scan())
         for text, color, cmd in (
             ("⚙", C["dim"], self._open_settings),
             ("＋", C["green"], self._open_quick_add),
@@ -168,6 +183,9 @@ class Overlay:
             else:
                 text = "已复活" if status == "respawned" else _fmt(left)
                 color = C["green"] if status == "respawned" else C["blue"]
+            # 最后 60 秒红色闪烁（已过最早时间的区间 Boss 显示 +XX:XX:XX 不闪）
+            if 0 < left <= 60 and status == "waiting":
+                color = _blink_color(t, color)
             w["cd"].config(text=text, fg=color)
 
     def _tick(self):
@@ -252,8 +270,22 @@ class Overlay:
             pass
 
     def _show_banner_ui(self, text: str):
+        """提醒条从顶部滑入，停留 BANNER_MS 后消失。"""
         self.banner.config(text=text)
-        self.banner.pack(fill="x", before=self.root.winfo_children()[1])
+        self.banner.pack_forget()
+        # 先放到屏幕外，再分步滑入（简单帧动画）
+        self.banner.place(relx=0, y=-30, relwidth=1)
+        step = 6
+
+        def slide(y):
+            if y >= 0:
+                self.banner.place_forget()
+                self.banner.pack(fill="x", before=self.root.winfo_children()[1])
+                return
+            self.banner.place(relx=0, y=y, relwidth=1)
+            self.root.after(16, lambda: slide(y + step))
+
+        slide(-30)
         if self._banner_job:
             self.root.after_cancel(self._banner_job)
         self._banner_job = self.root.after(BANNER_MS, lambda: self.banner.pack_forget())
@@ -479,12 +511,25 @@ class Overlay:
                  font=self.small).grid(row=row, column=0, columnspan=2, sticky="w")
         row += 1
 
+        # —— 悬浮窗外观 ——
+        section("悬浮窗外观")
+        ov = cfg["overlay"]
+        v_alpha = tk.DoubleVar(value=float(ov.get("alpha", 0.92)))
+        alpha_scale = tk.Scale(nb, from_=0.6, to=1.0, resolution=0.02, orient="horizontal",
+                               variable=v_alpha, bg=C["panel"], fg=C["text"],
+                               highlightthickness=0, troughcolor=C["bg"], length=180)
+        alpha_scale.set(float(ov.get("alpha", 0.92)))
+        add_row("不透明度", alpha_scale)
+        # 拖动滑条实时预览透明度
+        alpha_scale.config(command=lambda v: self.root.attributes("-alpha", float(v)))
+
         def save():
             srv_url = netclient.validate_base_url(srv.get().strip())
             if srv_url:
                 self.base_url = srv_url
             settings.update({
                 "server": {"base_url": self.base_url},
+                "overlay": {"alpha": round(float(v_alpha.get()), 2)},
                 "ocr": {
                     "enabled": v_ocr_on.get(),
                     "engine": v_engine.get(),
@@ -516,6 +561,24 @@ class Overlay:
         cfg = settings.load()["ocr"]
         settings.update({"ocr": {"enabled": not cfg["enabled"]}})
         self.show_banner("OCR 识别已开启" if not cfg["enabled"] else "OCR 识别已关闭")
+
+    def _manual_scan(self):
+        """🔍 立即识别一次：常驻模式也可用，手动模式的唯一触发入口。"""
+        cfg = settings.load()["ocr"]
+        if not cfg.get("enabled"):
+            self.show_banner("请先点 👁 开启 OCR 识别")
+            return
+        self.show_banner("正在识别屏幕…")
+
+        def run():
+            res = watcher.scan_once()
+            if res.get("error"):
+                self.show_banner(f"识别失败：{res['error'][:60]}")
+            elif res.get("hits"):
+                self.show_banner(f"命中：{'、'.join(res['hits'])}")
+            else:
+                self.show_banner(f"识别完成，未命中（{(res.get('text') or '无文字')[:40]}）")
+        threading.Thread(target=run, daemon=True).start()
 
     # ---------- 区域框选 ----------
 
@@ -609,6 +672,15 @@ class Overlay:
         else:
             self.rows_frame.pack(fill="x")
             self.status_bar.pack(fill="x")
+        settings.update({"overlay": {"collapsed": self.collapsed}})   # 记住折叠状态
+
+    def _save_position(self):
+        """拖动结束后记录窗口位置，下次启动恢复。"""
+        try:
+            x, y = self.root.winfo_x(), self.root.winfo_y()
+            settings.update({"overlay": {"x": x, "y": y}})
+        except Exception:
+            pass
 
     def _bind_drag(self):
         def start(e):
@@ -617,13 +689,18 @@ class Overlay:
         def move(e):
             self.root.geometry(f"+{e.x_root - self._dx}+{e.y_root - self._dy}")
 
+        def release(e):
+            self._save_position()
+
         # 标题栏与行容器的空白处可拖动；内部按钮/输入框有自己的事件
         bar = self.root.winfo_children()[1]  # [0] 是隐藏的 banner
         for widget in (bar, self.rows_frame):
             widget.bind("<Button-1>", start)
             widget.bind("<B1-Motion>", move)
+            widget.bind("<ButtonRelease-1>", release)
 
     def _close(self):
+        self._save_position()   # 退出前记住位置
         if self.is_host:
             from tkinter import messagebox
             if not messagebox.askyesno(

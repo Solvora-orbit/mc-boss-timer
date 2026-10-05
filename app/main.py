@@ -149,6 +149,38 @@ def api_reset_boss(boss_id: str):
     return storage.save_boss({"last_kill_at": None}, boss_id)
 
 
+@app.get("/api/export")
+def api_export():
+    """导出全部 Boss 配置（含关键词），用于换机/备份。"""
+    return {"version": APP_VERSION, "exported_at": datetime.now(timezone.utc).timestamp(),
+            "bosses": storage.load_all()}
+
+
+@app.post("/api/import")
+def api_import(payload: dict):
+    """导入 Boss 配置：按 id 覆盖已存在的、新增没有的，无效记录跳过。"""
+    items = payload.get("bosses") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        raise HTTPException(status_code=400, detail="缺少 bosses 数组")
+    added = updated = skipped = 0
+    existing_ids = {b["id"] for b in storage.load_all()}
+    for raw in items:
+        if not isinstance(raw, dict) or not raw.get("name") or raw.get("mode") not in ("fixed", "range"):
+            skipped += 1
+            continue
+        boss_id = raw.get("id")
+        try:
+            if boss_id and boss_id in existing_ids:
+                storage.save_boss(raw, boss_id)
+                updated += 1
+            else:
+                storage.save_boss(raw)   # 无 id 或 id 冲突不到时都作为新增
+                added += 1
+        except Exception:
+            skipped += 1
+    return {"added": added, "updated": updated, "skipped": skipped}
+
+
 @app.get("/api/history")
 def api_history(limit: int = 200):
     """击杀历史（倒序）+ 每 Boss 简单统计。"""

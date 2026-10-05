@@ -18,11 +18,14 @@ DEFAULTS = {
     "ocr": {
         "enabled": False,        # 默认关闭
         "engine": "windows",     # windows | rapidocr
-        "interval": 3,           # 识别间隔（秒）
+        "run_mode": "always",    # always 常驻轮询 | manual 手动（点按钮才识别）
+        "interval": 3,           # 常驻模式识别间隔（秒）
         "mode": "auto",          # auto 自动标记 | confirm 仅提醒待确认
         "cooldown": 60,          # 同一 Boss 触发冷却（秒）
         "region": None,          # 监测区域 {x,y,w,h}，None=全屏
         "lang": "zh-CN",
+        "only_game_foreground": False,   # 仅当前台窗口是游戏时才识别
+        "game_window_keyword": "Minecraft",  # 前台窗口标题需包含的关键字
     },
     "notify": {
         "enabled": False,
@@ -35,6 +38,11 @@ DEFAULTS = {
         "enabled": False,
         "kill": "ctrl+alt+k",
         "reset": "ctrl+alt+r",
+    },
+    "overlay": {
+        "x": 80, "y": 80,        # 悬浮窗位置（拖动后记忆）
+        "collapsed": False,      # 折叠状态记忆
+        "alpha": 0.92,           # 悬浮窗透明度
     },
 }
 

@@ -85,11 +85,33 @@ main { padding: 22px; max-width: 1200px; margin: 0 auto; }
   display: flex;
   flex-direction: column;
   gap: 10px;
-  transition: border-color .3s;
+  transition: border-color .3s, transform .18s ease, box-shadow .18s ease;
 }
 
-.boss-card.status-possible { border-color: var(--orange); box-shadow: 0 0 12px rgba(255,152,0,.25); }
-.boss-card.status-respawned { border-color: var(--green); box-shadow: 0 0 12px rgba(76,175,80,.25); }
+/* hover 抬升细节 */
+.boss-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0,0,0,.35);
+}
+
+/* 进入动画：新建卡片淡入上浮 */
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.boss-card { animation: card-in .25s ease-out; }
+
+/* 可能已复活/应已复活：呼吸发光 */
+@keyframes breathe-orange {
+  0%, 100% { box-shadow: 0 0 6px rgba(255,152,0,.25); }
+  50%      { box-shadow: 0 0 16px rgba(255,152,0,.55); }
+}
+@keyframes breathe-green {
+  0%, 100% { box-shadow: 0 0 6px rgba(76,175,80,.25); }
+  50%      { box-shadow: 0 0 16px rgba(76,175,80,.55); }
+}
+.boss-card.status-possible { border-color: var(--orange); animation: breathe-orange 2.2s ease-in-out infinite; }
+.boss-card.status-respawned { border-color: var(--green); animation: breathe-green 2.2s ease-in-out infinite; }
 
 .card-head {
   display: flex;
@@ -123,6 +145,37 @@ main { padding: 22px; max-width: 1200px; margin: 0 auto; }
 }
 .countdown.warn { color: var(--orange); }
 .countdown.done { color: var(--green); }
+
+/* 最后 60 秒：红色脉冲 */
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; text-shadow: 0 0 6px rgba(229,57,53,.4); }
+  50%      { opacity: .55; text-shadow: 0 0 14px rgba(229,57,53,.8); }
+}
+.countdown.warn-last { color: var(--red); animation: pulse-red 1s ease-in-out infinite; }
+
+/* 复活进度条 */
+.progress-wrap {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg);
+  overflow: hidden;
+  visibility: hidden;
+}
+.progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--green-dark), var(--green));
+  transition: width 1s linear;
+}
+/* 区间模式：进度条上标出的复活窗口段 */
+.progress-range {
+  position: absolute;
+  top: 0; height: 100%;
+  background: rgba(255,152,0,.45);
+  border-left: 1px solid var(--orange);
+  border-right: 1px solid var(--orange);
+}
 
 .respawn-clock {
   text-align: center;
@@ -167,6 +220,12 @@ main { padding: 22px; max-width: 1200px; margin: 0 auto; }
   max-width: 460px;
   max-height: 90vh;
   overflow-y: auto;
+  /* 淡入缩放动画 */
+  animation: modal-in .18s ease-out;
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(.95) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 .modal-box.small { max-width: 380px; }
 .modal-box h2 { font-size: 17px; margin-bottom: 16px; }
@@ -263,3 +322,17 @@ main { padding: 22px; max-width: 1200px; margin: 0 auto; }
 .source-hotkey { background: rgba(66,165,245,.15); color: var(--blue); }
 .source-ocr { background: rgba(255,152,0,.15); color: var(--orange); }
 .keyword-tag { font-size: 11px; color: var(--orange); }
+
+/* 关键词集中管理 */
+.kw-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.kw-name {
+  flex: 0 0 90px; font-size: 13px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.kw-input {
+  flex: 1; background: var(--bg); border: 1px solid var(--panel-border);
+  border-radius: 6px; color: var(--text); padding: 6px 8px; font-size: 13px;
+}
+.kw-input:focus { outline: none; border-color: var(--green); }

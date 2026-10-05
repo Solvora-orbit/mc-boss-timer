@@ -106,8 +106,20 @@ def grab_region(region: dict | None):
         return Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
 
 
+_scan_lock = threading.Lock()   # 防止常驻循环与手动 🔍 同时调用引擎
+
+
 def scan_once() -> dict:
     """执行一次完整识别与匹配，返回调试信息（/api/watcher/test 用）。"""
+    if not _scan_lock.acquire(blocking=False):
+        return {"text": "", "hits": [], "error": "上一次识别尚未结束"}
+    try:
+        return _scan_once_inner()
+    finally:
+        _scan_lock.release()
+
+
+def _scan_once_inner() -> dict:
     cfg = settings.load()
     ocr_cfg = cfg["ocr"]
     base = cfg["server"]["base_url"].rstrip("/")
@@ -185,7 +197,26 @@ def on_status(cb) -> None:
     _status_listeners.append(cb)
 
 
+def _foreground_title() -> str:
+    """取当前前台窗口标题（用于「仅游戏前台时识别」判断）。"""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, buf, 256)
+        return buf.value
+    except Exception:
+        return ""
+
+
 def _loop():
+    """识别主循环。所有配置每轮重读，改动即时生效：
+    - enabled=false：待机
+    - run_mode=manual：不自动扫，等 trigger_scan() 事件（悬浮窗 🔍 / 网页按钮）
+    - run_mode=always：按间隔轮询；若开启「仅游戏前台」，前台窗口标题
+      不含游戏关键字时跳过本轮（省资源）
+    """
     while True:
         cfg = settings.load()
         ocr_cfg = cfg["ocr"]
@@ -196,18 +227,46 @@ def _loop():
                 _notify_listeners()
             time.sleep(1)
             continue
-        if not state.running:
-            with state.lock:
-                state.running = True
-            _notify_listeners()
-        interval = max(1, float(ocr_cfg.get("interval", 3)))
-        started = time.time()
+
+        run_mode = ocr_cfg.get("run_mode", "always")
+        if run_mode == "manual":
+            # 手动模式：挂起等待触发事件；超时醒来重读配置（改设置能即时生效）
+            if state.running:
+                with state.lock:
+                    state.running = False
+                _notify_listeners()
+            if not scan_trigger.wait(timeout=1.0):
+                continue
+            scan_trigger.clear()
+        else:
+            if not state.running:
+                with state.lock:
+                    state.running = True
+                _notify_listeners()
+            # 仅游戏前台时识别
+            if ocr_cfg.get("only_game_foreground"):
+                keyword = (ocr_cfg.get("game_window_keyword") or "Minecraft").lower()
+                if keyword not in _foreground_title().lower():
+                    time.sleep(1)
+                    continue
+            interval = max(1, float(ocr_cfg.get("interval", 3)))
+            started = time.time()
         try:
             scan_once()
         except Exception as e:  # 兜底，保证线程不死
             state.log("error", f"scan 异常: {e}")
-        # 间隔从扫描开始时间起算，保证节奏稳定
-        time.sleep(max(0.2, interval - (time.time() - started)))
+        if run_mode != "manual":
+            # 间隔从扫描开始时间起算，保证节奏稳定
+            time.sleep(max(0.2, interval - (time.time() - started)))
+
+
+# 手动模式下的单次识别触发器
+scan_trigger = threading.Event()
+
+
+def trigger_scan():
+    """外部请求立即识别一次（手动模式入口）。"""
+    scan_trigger.set()
 
 
 def start() -> threading.Thread:

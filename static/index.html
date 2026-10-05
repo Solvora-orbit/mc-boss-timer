@@ -117,22 +117,36 @@
           </label>
         </div>
         <div class="two-col">
+          <label>运行模式
+            <select id="s-ocr-runmode">
+              <option value="always">常驻（按间隔自动识别）</option>
+              <option value="manual">手动（点按钮才识别，最省资源）</option>
+            </select>
+          </label>
           <label>触发方式
             <select id="s-ocr-mode">
               <option value="auto">自动标记击杀</option>
               <option value="confirm">仅提醒，待确认</option>
             </select>
           </label>
-          <label>冷却（秒）
-            <input type="number" id="s-ocr-cooldown" min="5" max="3600" step="5">
-          </label>
         </div>
+        <label class="check"><input type="checkbox" id="s-ocr-foreground"> 仅游戏在前台时识别（省资源）</label>
+        <label>游戏窗口标题关键字
+          <input type="text" id="s-ocr-gamekw" maxlength="50" placeholder="默认 Minecraft">
+        </label>
+        <label>冷却（秒）
+          <input type="number" id="s-ocr-cooldown" min="5" max="3600" step="5">
+        </label>
         <label>监测区域
           <span id="s-ocr-region" class="region-text"></span>
         </label>
-        <p class="settings-note">区域在悬浮窗 ⚙ → OCR → 框选区域 里设置（如左下角聊天栏）；关键词在编辑每个 Boss 时配置。</p>
+        <p class="settings-note">区域在悬浮窗 ⚙ → OCR → 框选区域 里设置（如左下角聊天栏）。</p>
         <button type="button" id="btn-ocr-test" class="btn small">立即试一次识别</button>
         <span id="ocr-test-result" class="ocr-test-result"></span>
+        <div style="margin-top:10px">
+          <p class="settings-note">识别关键词（留空 = 该 Boss 不参与自动识别）：</p>
+          <div id="s-kw-list"></div>
+        </div>
       </fieldset>
 
       <fieldset class="settings-group">
@@ -147,6 +161,16 @@
             <option value="earliest">仅最早复活时间</option>
           </select>
         </label>
+      </fieldset>
+
+      <fieldset class="settings-group">
+        <legend>配置管理</legend>
+        <p class="settings-note">Boss 配置与击杀历史自动保存在本机 data 目录，重启不丢失；换机可导出/导入。</p>
+        <div class="two-col">
+          <button type="button" id="btn-export" class="btn small">导出配置</button>
+          <button type="button" id="btn-import" class="btn small">导入配置</button>
+        </div>
+        <input type="file" id="import-file" accept=".json" class="hidden">
       </fieldset>
 
       <div class="modal-actions">

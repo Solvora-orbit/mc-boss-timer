@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "MC Boss 计时器"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 # 服务监听配置：0.0.0.0 允许局域网访问
 HOST = "0.0.0.0"
