@@ -19,8 +19,13 @@ _BOSS_FIELDS = {
     "location": str,
     "drops": str,
     "notes": str,
+    "ocr_keywords": str,        # OCR 击杀识别关键词，逗号分隔，可选
     "last_kill_at": (int, float, type(None)),  # 击杀时间 unix 秒
 }
+
+# 击杀历史文件：滚动保留最近 MAX_HISTORY 条
+MAX_HISTORY = 1000
+_HISTORY_FILE = DATA_DIR / "history.json"
 
 
 def _now() -> float:
@@ -112,3 +117,44 @@ def delete_boss(boss_id: str) -> bool:
             return False
         _write_raw(remaining)
         return True
+
+
+# ---------- 击杀历史 ----------
+
+def _read_history() -> list:
+    try:
+        raw = json.loads(_HISTORY_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [i for i in raw if isinstance(i, dict)] if isinstance(raw, list) else []
+
+
+def add_history(entry: dict) -> dict:
+    """追加一条击杀历史，超限滚动裁剪。"""
+    record = {
+        "boss_id": str(entry.get("boss_id", "")),
+        "boss_name": str(entry.get("boss_name", "")),
+        "source": entry.get("source") if entry.get("source") in ("manual", "hotkey", "ocr") else "manual",
+        "kill_at": float(entry.get("kill_at") or 0),
+    }
+    with _lock:
+        items = _read_history()
+        items.append(record)
+        if len(items) > MAX_HISTORY:
+            items = items[-MAX_HISTORY:]
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        _HISTORY_FILE.write_text(
+            json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    return record
+
+
+def load_history(limit: int = 200) -> list[dict]:
+    return list(reversed(_read_history()))[:max(0, limit)]
+
+
+def clear_history() -> None:
+    with _lock:
+        try:
+            _HISTORY_FILE.unlink()
+        except OSError:
+            pass

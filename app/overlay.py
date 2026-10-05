@@ -1,23 +1,22 @@
 """游戏内悬浮窗：置顶、半透明、可拖动的小窗。
 
-游戏中也能看倒计时、一键标记击杀 / 重置、快速添加 Boss。
-数据来自目标主机的 /api/state（默认本机，客户端模式下可指向队友主机）。
+游戏中也能看倒计时、一键标记击杀 / 重置、快速添加 Boss，
+以及管理 OCR 识别、复活提醒、全局热键等本机功能。
+数据来自目标主机的 /api/state（默认本机，可指向队友主机/虚拟组网地址）。
 """
-import ipaddress
 import json
 import queue
-import socket
 import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
-import urllib.request
-from urllib.parse import urlparse
 
+from . import netclient, notify, settings, watcher
 from .config import DATA_DIR
 
 FETCH_INTERVAL = 1.0          # 向服务器拉取全量状态的间隔（秒）
 TICK_MS = 500                 # 界面刷新间隔（毫秒）
+BANNER_MS = 8000              # 提醒条显示时长（毫秒）
 
 C = {
     "bg": "#15181e",
@@ -31,86 +30,7 @@ C = {
     "red": "#ef5350",
     "btn": "#2a3140",
 }
-STATUS_TEXT = {
-    "idle": "未开始",
-    "waiting": "倒计时中",
-    "possible": "可能已复活",
-    "respawned": "应已复活",
-}
 STATUS_COLOR = {"idle": "dim", "waiting": "blue", "possible": "orange", "respawned": "green"}
-
-
-def validate_base_url(url: str) -> str | None:
-    """校验用户输入的服务器地址，返回规范化后的 URL，非法则返回 None。
-
-    本工具是局域网共享客户端，网络边界被显式限定为「仅限本机/私网地址」：
-    主机名必须解析到环回、私网或链路本地 IP 才允许请求，
-    公网地址与无法解析的地址一律拒绝。
-    """
-    if not isinstance(url, str) or not url or any(ch.isspace() for ch in url):
-        return None
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        return None
-    # 禁止内嵌凭据、查询串等附加成分，避免 URL 结构被滥用
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        return None
-    try:
-        port = parsed.port  # 超范围端口会在此抛 ValueError
-    except ValueError:
-        return None
-    if port is not None and not (1 <= port <= 65535):
-        return None
-    if not _host_is_lan(parsed.hostname):
-        return None
-    return url.rstrip("/")
-
-
-def _host_is_lan(host: str) -> bool:
-    """主机名（或 IP 字面量）必须解析到允许的组网地址段。
-
-    除常规局域网外，也放行各类虚拟组网工具的网段：
-    蒲公英(172.16.x)、ZeroTier(10.x/192.168.191.x) 落在私网段；
-    Tailscale 等用 CGNAT 100.64/10；Hamachi 用 25/8；Radmin VPN 用 26/8。
-    """
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        try:
-            ip = ipaddress.ip_address(socket.gethostbyname(host))
-        except (OSError, ValueError):
-            return False
-    if ip.version == 6:
-        return ip.is_loopback or ip.is_link_local or ip.is_private
-    return any(ip in net for net in _ALLOWED_V4_NETS)
-
-
-# 显式允许的 IPv4 目标段：常规局域网 + 常见虚拟组网工具
-_ALLOWED_V4_NETS = [
-    ipaddress.ip_network(n)
-    for n in (
-        "127.0.0.0/8",        # 环回
-        "10.0.0.0/8",         # 私网（ZeroTier 等）
-        "172.16.0.0/12",      # 私网（蒲公英等）
-        "192.168.0.0/16",     # 私网
-        "169.254.0.0/16",     # 链路本地
-        "100.64.0.0/10",      # CGNAT（Tailscale 等）
-        "25.0.0.0/8",         # Hamachi
-        "26.0.0.0/8",         # Radmin VPN
-    )
-]
-
-
-class _LANRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """重定向目标必须同样通过局域网边界校验，否则中止。"""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if validate_base_url(newurl) is None:
-            return None
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
-_opener = urllib.request.build_opener(_LANRedirectHandler())
 
 
 def _fmt(seconds: float | None) -> str:
@@ -125,17 +45,25 @@ def _fmt(seconds: float | None) -> str:
 
 class Overlay:
     def __init__(self, base_url: str, is_host: bool):
-        self.base_url = validate_base_url(base_url) or "http://127.0.0.1:8000"
+        # 高 DPI 屏幕下让 tkinter 使用真实像素，保证框选区域坐标与截屏一致
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            pass
+
         self.is_host = is_host
+        saved = settings.load()["server"]["base_url"]
+        self.base_url = netclient.validate_base_url(saved) or \
+            netclient.validate_base_url(base_url) or "http://127.0.0.1:8000"
         self.bosses: list[dict] = []
         self.server_offset = 0.0
-        self.online = False
         self.collapsed = False
         self._events = queue.Queue()   # 抓取线程 -> UI 线程
         self._wake = threading.Event() # 操作后立即触发一次抓取
         self._row_widgets: dict[str, dict] = {}
-        self._settings_file = DATA_DIR / "overlay.json"
-        self._load_settings()
+        self._banner_job = None
+        self._watcher_running = None
 
         self.root = tk.Tk()
         self.root.title("MC Boss 计时器 - 悬浮窗")
@@ -152,21 +80,36 @@ class Overlay:
         self._build_ui()
         self._rebuild_rows()   # 初始空列表也要显示提示文案
         self._bind_drag()
+
+        # 注册进程内回调：OCR 确认、提醒条、系统通知、识别线程状态
+        watcher.confirm_handler = self._on_ocr_confirm
+        notify.banner_handler = self.show_banner
+        notify.toast_handler = self.show_toast
+        watcher.on_status(self._on_watcher_status)
+
         threading.Thread(target=self._fetch_loop, daemon=True).start()
         self.root.after(TICK_MS, self._tick)
 
     # ---------- UI ----------
 
     def _build_ui(self):
+        # 提醒条（复活到点 / OCR 命中等），默认隐藏
+        self.banner = tk.Label(self.root, text="", bg="#5d4037", fg="#ffe0b2",
+                               font=self.font, padx=8, pady=4, anchor="w")
+
         # 标题栏：拖动手柄 + 操作按钮
         bar = tk.Frame(self.root, bg=C["panel"], padx=6, pady=4)
         bar.pack(fill="x")
         tk.Label(bar, text="⛏ Boss计时器", bg=C["panel"], fg=C["text"],
                  font=self.font).pack(side="left")
+        self.ocr_toggle = tk.Label(bar, text="👁", bg=C["panel"], fg=C["dim"],
+                                   font=self.font, padx=5, cursor="hand2")
+        self.ocr_toggle.pack(side="right")
+        self.ocr_toggle.bind("<Button-1>", lambda e: self._toggle_ocr())
         for text, color, cmd in (
+            ("⚙", C["dim"], self._open_settings),
             ("＋", C["green"], self._open_quick_add),
             ("—", C["dim"], self._toggle_collapse),
-            ("⚙", C["dim"], self._open_settings),
             ("✕", C["red"], self._close),
         ):
             lbl = tk.Label(bar, text=text, bg=C["panel"], fg=color,
@@ -228,12 +171,11 @@ class Overlay:
             w["cd"].config(text=text, fg=color)
 
     def _tick(self):
-        # 1. 收取抓取线程的结果
+        # 1. 收取抓取线程的结果与后台事件（banner/确认框/OCR状态）
         try:
             while True:
                 kind, payload = self._events.get_nowait()
                 if kind == "state":
-                    self.online = True
                     self.server_offset = payload["server_time"] - time.time()
                     old_ids = [b["id"] for b in self.bosses]
                     new_ids = [b["id"] for b in payload["bosses"]]
@@ -241,44 +183,126 @@ class Overlay:
                     if old_ids != new_ids:
                         self._rebuild_rows()
                     self._update_rows()
-                    self.status_bar.config(text=f"✔ {self.base_url}", fg=C["green"])
+                    self._update_status_bar(online=True)
                 elif kind == "error":
-                    self.online = False
-                    self.status_bar.config(text="✘ 连接断开，重试中…", fg=C["red"])
+                    self._update_status_bar(online=False)
+                elif kind == "banner":
+                    self._show_banner_ui(payload)
+                elif kind == "toast":
+                    self._show_toast_ui(payload)
+                elif kind == "confirm":
+                    self._show_kill_confirm_ui(payload)
+                elif kind == "watcher":
+                    running = bool(payload.get("running"))
+                    if running != self._watcher_running:
+                        self._watcher_running = running
+                        self.ocr_toggle.config(fg=C["green"] if running else C["dim"])
+                        self._update_status_bar(online=True)
         except queue.Empty:
             pass
         # 2. 本地时钟推进倒计时（两次抓取之间也走秒）
         self._update_rows()
         self.root.after(TICK_MS, self._tick)
 
+    def _update_status_bar(self, online: bool):
+        if online:
+            text = f"✔ {self.base_url}"
+            color = C["green"]
+        else:
+            text = "✘ 连接断开，重试中…"
+            color = C["red"]
+        if self._watcher_running:
+            text += "　👁 OCR运行中"
+            color = C["green"]
+        self.status_bar.config(text=text, fg=color)
+
+    # ---------- 回调（来自后台线程，只投递事件，UI 线程消费） ----------
+
+    def show_banner(self, text: str):
+        self._events.put(("banner", text))
+
+    def show_toast(self, text: str):
+        self._events.put(("toast", text))
+
+    def _show_toast_ui(self, text: str):
+        """Windows 系统通知（必须在主线程调用）。
+
+        注意：winrt 静态投影限制，须经 ToastNotificationManager.get_default()
+        的 create_toast_notifier_with_id 创建；系统未对该 AUMID 开启横幅时
+        通知会静默进入通知中心，声音与悬浮窗提醒条不受影响。
+        """
+        try:
+            from xml.sax.saxutils import escape
+
+            from winrt.windows.data.xml import dom as xml_dom
+            from winrt.windows.ui.notifications import ToastNotification
+            from winrt.windows.ui.notifications import ToastNotificationManager
+
+            title, _, body = text.partition("：")
+            doc = xml_dom.XmlDocument()
+            doc.load_xml(
+                "<toast><visual><binding template='ToastGeneric'>"
+                f"<text>{escape(title)}</text><text>{escape(body or title)}</text>"
+                "</binding></visual></toast>"
+            )
+            notifier = ToastNotificationManager.get_default().create_toast_notifier_with_id(
+                "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe")
+            notifier.show(ToastNotification(doc))
+        except Exception:
+            pass
+
+    def _show_banner_ui(self, text: str):
+        self.banner.config(text=text)
+        self.banner.pack(fill="x", before=self.root.winfo_children()[1])
+        if self._banner_job:
+            self.root.after_cancel(self._banner_job)
+        self._banner_job = self.root.after(BANNER_MS, lambda: self.banner.pack_forget())
+
+    def _on_watcher_status(self, st: dict):
+        self._events.put(("watcher", st))
+
+    def _on_ocr_confirm(self, boss: dict):
+        """OCR 确认模式命中：投递事件，UI 线程弹确认框。"""
+        self._events.put(("confirm", boss))
+
+    def _show_kill_confirm_ui(self, boss: dict):
+        win = tk.Toplevel(self.root)
+        win.title("OCR 识别到击杀")
+        win.configure(bg=C["panel"], padx=14, pady=10)
+        win.attributes("-topmost", True)
+        tk.Label(win, text=f"识别到「{boss['name']}」的击杀关键词",
+                 bg=C["panel"], fg=C["text"], font=self.font).pack()
+        tk.Label(win, text="要标记为已击杀吗？", bg=C["panel"], fg=C["dim"],
+                 font=self.small).pack(pady=(2, 8))
+        btns = tk.Frame(win, bg=C["panel"])
+        btns.pack()
+        tk.Button(btns, text="标记击杀", bg="#2e7d32", fg="white", relief="flat",
+                  font=self.font, command=lambda: (self._quick_action(boss["id"], "kill", source="ocr"),
+                                                   win.destroy())).pack(side="left", padx=4)
+        tk.Button(btns, text="忽略", bg=C["btn"], fg=C["text"], relief="flat",
+                  font=self.font, command=win.destroy).pack(side="left", padx=4)
+
     # ---------- 网络 ----------
 
     def _fetch_loop(self):
         while True:
             try:
-                with _opener.open(f"{self.base_url}/api/state", timeout=2) as r:
-                    data = json.loads(r.read())
+                data = netclient.get_json(f"{self.base_url}/api/state", timeout=2)
                 self._events.put(("state", data))
             except Exception:
                 self._events.put(("error", None))
             self._wake.wait(FETCH_INTERVAL)
             self._wake.clear()
 
-    def _request(self, path: str, body: dict | None = None, method: str = "POST"):
+    def _quick_action(self, boss_id: str, action: str, source: str = "manual"):
         def run():
             try:
-                data = json.dumps(body).encode() if body is not None else None
-                req = urllib.request.Request(
-                    f"{self.base_url}{path}", data=data, method=method,
-                    headers={"Content-Type": "application/json"})
-                _opener.open(req, timeout=3)
+                body = {"source": source} if action == "kill" else {}
+                netclient.post_json(f"{self.base_url}/api/bosses/{boss_id}/{action}", body)
                 self._wake.set()
             except Exception:
                 self._events.put(("error", None))
         threading.Thread(target=run, daemon=True).start()
-
-    def _quick_action(self, boss_id: str, action: str):
-        self._request(f"/api/bosses/{boss_id}/{action}")
 
     # ---------- 弹窗 ----------
 
@@ -312,7 +336,14 @@ class Overlay:
                 m = 0
             if not n or m <= 0:
                 return
-            self._request("/api/bosses", {"name": n, "mode": "fixed", "respawn_minutes": m})
+            def run():
+                try:
+                    netclient.post_json(f"{self.base_url}/api/bosses",
+                                        {"name": n, "mode": "fixed", "respawn_minutes": m})
+                    self._wake.set()
+                except Exception:
+                    pass
+            threading.Thread(target=run, daemon=True).start()
             win.destroy()
 
         tk.Button(win, text="添加", command=submit, bg="#2e7d32", fg="white",
@@ -321,31 +352,252 @@ class Overlay:
                                                                columnspan=2, pady=(8, 0))
         name.focus_set()
 
+    # ---------- 设置窗 ----------
+
     def _open_settings(self):
-        win = self._centered_toplevel("服务器地址")
-        tk.Label(win, text="主机地址", bg=C["panel"], fg=C["text"],
-                 font=self.font).grid(row=0, column=0, sticky="w", pady=2)
-        entry = tk.Entry(win, bg=C["bg"], fg=C["text"], insertbackground=C["text"],
-                         relief="flat", font=self.font, width=24)
-        entry.insert(0, self.base_url)
-        entry.grid(row=0, column=1, pady=2)
-        tk.Label(win, text="支持局域网/虚拟组网地址\n如 http://192.168.1.5:8000 或蒲公英 IP",
-                 bg=C["panel"], fg=C["dim"], font=self.small,
-                 justify="left").grid(row=1, column=0, columnspan=2, sticky="w")
+        cfg = settings.load()
+        win = self._centered_toplevel("设置")
+        win.geometry("+200+140")
+        nb = tk.Frame(win, bg=C["panel"])
+        nb.pack(fill="both", expand=True)
+        row = 0
+
+        def section(title):
+            nonlocal row
+            lbl = tk.Label(nb, text=title, bg=C["panel"], fg=C["blue"], font=self.font)
+            lbl.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 2))
+            row += 1
+
+        def add_check(text, var):
+            nonlocal row
+            cb = tk.Checkbutton(nb, text=text, variable=var, bg=C["panel"], fg=C["text"],
+                                selectcolor=C["bg"], activebackground=C["panel"],
+                                font=self.small, anchor="w")
+            cb.grid(row=row, column=0, columnspan=2, sticky="w")
+            row += 1
+
+        def add_row(label, widget):
+            nonlocal row
+            tk.Label(nb, text=label, bg=C["panel"], fg=C["text"],
+                     font=self.small).grid(row=row, column=0, sticky="w", pady=2)
+            widget.grid(row=row, column=1, sticky="e", pady=2)
+            row += 1
+
+        # —— 服务器 ——
+        section("服务器")
+        srv = tk.Entry(nb, bg=C["bg"], fg=C["text"], insertbackground=C["text"],
+                       relief="flat", font=self.small, width=26)
+        srv.insert(0, self.base_url)
+        add_row("API 地址", srv)
+
+        # —— OCR 识别 ——
+        section("OCR 自动识别击杀")
+        ocr = cfg["ocr"]
+        v_ocr_on = tk.BooleanVar(value=ocr["enabled"])
+        v_engine = tk.StringVar(value=ocr["engine"])
+        v_interval = tk.StringVar(value=str(ocr["interval"]))
+        v_mode = tk.StringVar(value=ocr["mode"])
+        v_cooldown = tk.StringVar(value=str(ocr["cooldown"]))
+        add_check("开启（游戏内自动识别击杀）", v_ocr_on)
+        engine_combo = tk.OptionMenu(nb, v_engine, "windows", "rapidocr")
+        engine_combo.config(bg=C["btn"], fg=C["text"], relief="flat",
+                            activebackground="#3a4354", font=self.small)
+        engine_combo.nametowidget(engine_combo.menuname).config(font=self.small)
+        add_row("引擎", engine_combo)
+        interval_spin = tk.Spinbox(nb, from_=1, to=60, textvariable=v_interval, width=5,
+                                   bg=C["bg"], fg=C["text"], relief="flat",
+                                   insertbackground=C["text"], buttonbackground=C["btn"])
+        add_row("识别间隔(秒)", interval_spin)
+        mode_frame = tk.Frame(nb, bg=C["panel"])
+        tk.Radiobutton(mode_frame, text="自动标记", variable=v_mode, value="auto",
+                       bg=C["panel"], fg=C["text"], selectcolor=C["bg"],
+                       activebackground=C["panel"], font=self.small).pack(side="left")
+        tk.Radiobutton(mode_frame, text="仅提醒待确认", variable=v_mode, value="confirm",
+                       bg=C["panel"], fg=C["text"], selectcolor=C["bg"],
+                       activebackground=C["panel"], font=self.small).pack(side="left", padx=6)
+        add_row("触发方式", mode_frame)
+        cooldown_spin = tk.Spinbox(nb, from_=5, to=3600, textvariable=v_cooldown, width=5,
+                                   bg=C["bg"], fg=C["text"], relief="flat",
+                                   insertbackground=C["text"], buttonbackground=C["btn"])
+        add_row("冷却(秒)", cooldown_spin)
+        region_text = "全屏" if not ocr.get("region") else \
+            f"x={ocr['region']['x']}, y={ocr['region']['y']}, {ocr['region']['w']}×{ocr['region']['h']}"
+        v_region_label = tk.Label(nb, text=region_text, bg=C["panel"], fg=C["dim"],
+                                  font=self.small)
+        add_row("监测区域", v_region_label)
+        region_btns = tk.Frame(nb, bg=C["panel"])
+        tk.Button(region_btns, text="框选区域", bg=C["btn"], fg=C["text"], relief="flat",
+                  font=self.small, command=lambda: self._open_region_selector(
+                      lambda r: (v_region_label.config(
+                          text="全屏" if not r else f"x={r['x']}, y={r['y']}, {r['w']}×{r['h']}"),
+                          win.lift()))).pack(side="left")
+        tk.Button(region_btns, text="清除", bg=C["btn"], fg=C["text"], relief="flat",
+                  font=self.small, command=lambda: (settings.update({"ocr": {"region": None}}),
+                                                    v_region_label.config(text="全屏"))).pack(side="left", padx=4)
+        nb.grid_columnconfigure(1, weight=1)
+        row += 0
+        tk.Label(nb, text="关键词在每个 Boss 的编辑里配置（逗号分隔）\n建议用短词，如：末影龙,击杀",
+                 bg=C["panel"], fg=C["dim"], font=self.small, justify="left").grid(
+            row=row, column=0, columnspan=2, sticky="w")
+        row += 1
+
+        # —— 复活提醒 ——
+        section("复活到点提醒")
+        nf = cfg["notify"]
+        v_notify_on = tk.BooleanVar(value=nf["enabled"])
+        v_sound = tk.BooleanVar(value=nf["sound"])
+        v_toast = tk.BooleanVar(value=nf["toast"])
+        v_banner = tk.BooleanVar(value=nf["banner"])
+        v_range_mode = tk.StringVar(value=nf["range_mode"])
+        add_check("开启", v_notify_on)
+        add_check("提示音", v_sound)
+        add_check("Windows 系统通知", v_toast)
+        add_check("悬浮窗提醒条", v_banner)
+        rm_frame = tk.Frame(nb, bg=C["panel"])
+        tk.Radiobutton(rm_frame, text="区间两端都提醒", variable=v_range_mode, value="both",
+                       bg=C["panel"], fg=C["text"], selectcolor=C["bg"],
+                       activebackground=C["panel"], font=self.small).pack(side="left")
+        tk.Radiobutton(rm_frame, text="仅最早复活", variable=v_range_mode, value="earliest",
+                       bg=C["panel"], fg=C["text"], selectcolor=C["bg"],
+                       activebackground=C["panel"], font=self.small).pack(side="left", padx=6)
+        add_row("区间 Boss", rm_frame)
+
+        # —— 全局热键 ——
+        section("全局热键")
+        hk = cfg["hotkeys"]
+        v_hk_on = tk.BooleanVar(value=hk["enabled"])
+        v_kill_key = tk.StringVar(value=hk["kill"])
+        v_reset_key = tk.StringVar(value=hk["reset"])
+        add_check("开启（游戏内直接按键，无需切窗）", v_hk_on)
+        kill_entry = tk.Entry(nb, textvariable=v_kill_key, width=14, bg=C["bg"], fg=C["text"],
+                              insertbackground=C["text"], relief="flat", font=self.small)
+        add_row("击杀热键", kill_entry)
+        reset_entry = tk.Entry(nb, textvariable=v_reset_key, width=14, bg=C["bg"], fg=C["text"],
+                               insertbackground=C["text"], relief="flat", font=self.small)
+        add_row("重置热键", reset_entry)
+        tk.Label(nb, text="作用目标：倒计时中最先复活的 Boss", bg=C["panel"], fg=C["dim"],
+                 font=self.small).grid(row=row, column=0, columnspan=2, sticky="w")
+        row += 1
 
         def save():
-            url = validate_base_url(entry.get().strip())
-            if url:
-                self.base_url = url
-                self._save_settings()
-                self._wake.set()
+            srv_url = netclient.validate_base_url(srv.get().strip())
+            if srv_url:
+                self.base_url = srv_url
+            settings.update({
+                "server": {"base_url": self.base_url},
+                "ocr": {
+                    "enabled": v_ocr_on.get(),
+                    "engine": v_engine.get(),
+                    "interval": max(1, int(float(v_interval.get() or 3))),
+                    "mode": v_mode.get(),
+                    "cooldown": max(5, int(float(v_cooldown.get() or 60))),
+                },
+                "notify": {
+                    "enabled": v_notify_on.get(),
+                    "sound": v_sound.get(),
+                    "toast": v_toast.get(),
+                    "banner": v_banner.get(),
+                    "range_mode": v_range_mode.get(),
+                },
+                "hotkeys": {
+                    "enabled": v_hk_on.get(),
+                    "kill": v_kill_key.get().strip() or "ctrl+alt+k",
+                    "reset": v_reset_key.get().strip() or "ctrl+alt+r",
+                },
+            })
+            self._wake.set()
             win.destroy()
 
-        tk.Button(win, text="保存", command=save, bg="#2e7d32", fg="white",
+        tk.Button(win, text="保存设置", command=save, bg="#2e7d32", fg="white",
                   activebackground="#4caf50", activeforeground="white",
-                  relief="flat", font=self.font, width=8).grid(row=2, column=0,
-                                                               columnspan=2, pady=(8, 0))
-        entry.focus_set()
+                  relief="flat", font=self.font, width=12).pack(pady=(12, 0))
+
+    def _toggle_ocr(self):
+        cfg = settings.load()["ocr"]
+        settings.update({"ocr": {"enabled": not cfg["enabled"]}})
+        self.show_banner("OCR 识别已开启" if not cfg["enabled"] else "OCR 识别已关闭")
+
+    # ---------- 区域框选 ----------
+
+    def _open_region_selector(self, on_done=None):
+        """全屏覆盖层拖拽框选监测区域，选中后写入设置。"""
+        try:
+            shot = watcher.grab_region(None)  # 主屏全屏
+        except Exception as e:
+            self.show_banner(f"截屏失败: {e}")
+            return
+        from PIL import ImageTk
+
+        top = tk.Toplevel(self.root)
+        top.attributes("-fullscreen", True)
+        top.attributes("-topmost", True)
+        top.configure(bg="black", cursor="crosshair")
+
+        dim = _blend_black(shot, 0.45)
+        photo = ImageTk.PhotoImage(dim, master=top)
+        canvas = tk.Canvas(top, highlightthickness=0, cursor="crosshair")
+        canvas.pack(fill="both", expand=True)
+        canvas.create_image(0, 0, image=photo, anchor="nw")
+
+        # 缩放比对：DPI aware 下画布像素 == 截屏像素；保险起见按比例换算
+        state_box = {"start": None, "rect": None}
+
+        hint = canvas.create_text(
+            shot.width // 2, 40, text="拖拽框选游戏内提示文字出现的区域（如左下角聊天栏）",
+            fill="#ffe0b2", font=("Microsoft YaHei", 16, "bold"))
+
+        def to_screen(x, y):
+            return int(x), int(y)
+
+        def on_press(e):
+            state_box["start"] = to_screen(e.x, e.y)
+            if state_box["rect"]:
+                canvas.delete(state_box["rect"])
+            state_box["rect"] = canvas.create_rectangle(
+                e.x, e.y, e.x, e.y, outline="#4caf50", width=2)
+
+        def on_drag(e):
+            if not state_box["start"]:
+                return
+            canvas.coords(state_box["rect"], state_box["start"][0], state_box["start"][1],
+                          e.x, e.y)
+
+        def on_release(e):
+            if not state_box["start"]:
+                return
+            x0, y0 = state_box["start"]
+            x1, y1 = to_screen(e.x, e.y)
+            state_box["region"] = {
+                "x": min(x0, x1), "y": min(y0, y1),
+                "w": abs(x1 - x0), "h": abs(y1 - y0),
+            }
+            canvas.itemconfig(hint, text=f"已选 {state_box['region']['w']}×{state_box['region']['h']}"
+                                         "　点击下方按钮确认", fill="#4caf50")
+
+        state_box["region"] = None
+        canvas.bind("<Button-1>", on_press)
+        canvas.bind("<B1-Motion>", on_drag)
+        canvas.bind("<ButtonRelease-1>", on_release)
+
+        bar = tk.Frame(top, bg="#1e232c", padx=10, pady=6)
+        # place 在底部中央
+        bar.place(relx=0.5, rely=0.97, anchor="s")
+
+        def confirm():
+            if state_box["region"] and state_box["region"]["w"] > 10 and state_box["region"]["h"] > 10:
+                settings.update({"ocr": {"region": state_box["region"]}})
+                if on_done:
+                    on_done(state_box["region"])
+            top.destroy()
+
+        tk.Button(bar, text="✔ 确认区域", command=confirm, bg="#2e7d32", fg="white",
+                  relief="flat", font=self.font, width=12).pack(side="left", padx=4)
+        tk.Button(bar, text="使用全屏", command=lambda: (settings.update({"ocr": {"region": None}}),
+                                                         on_done(None) if on_done else None,
+                                                         top.destroy()),
+                  bg=C["btn"], fg=C["text"], relief="flat", font=self.font, width=10).pack(side="left", padx=4)
+        tk.Button(bar, text="✕ 取消", command=top.destroy, bg="#7f2220", fg="white",
+                  relief="flat", font=self.font, width=8).pack(side="left", padx=4)
 
     # ---------- 窗口行为 ----------
 
@@ -366,28 +618,10 @@ class Overlay:
             self.root.geometry(f"+{e.x_root - self._dx}+{e.y_root - self._dy}")
 
         # 标题栏与行容器的空白处可拖动；内部按钮/输入框有自己的事件
-        bar = self.root.winfo_children()[0]
+        bar = self.root.winfo_children()[1]  # [0] 是隐藏的 banner
         for widget in (bar, self.rows_frame):
             widget.bind("<Button-1>", start)
             widget.bind("<B1-Motion>", move)
-
-    def _load_settings(self):
-        try:
-            saved = json.loads(self._settings_file.read_text(encoding="utf-8"))
-            url = validate_base_url(saved.get("base_url", ""))
-            if url:
-                self.base_url = url
-        except (OSError, json.JSONDecodeError):
-            pass
-
-    def _save_settings(self):
-        try:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            self._settings_file.write_text(
-                json.dumps({"base_url": self.base_url}, ensure_ascii=False),
-                encoding="utf-8")
-        except OSError:
-            pass
 
     def _close(self):
         if self.is_host:
@@ -401,3 +635,11 @@ class Overlay:
 
     def run(self):
         self.root.mainloop()
+
+
+def _blend_black(img, factor: float):
+    """图片压暗，用于全屏框选时的背景。"""
+    from PIL import Image
+
+    black = Image.new("RGB", img.size, "black")
+    return Image.blend(img.convert("RGB"), black, factor)

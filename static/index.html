@@ -14,6 +14,8 @@
     </div>
     <div class="header-right">
       <span id="lan-hint" class="lan-hint" title="把这个地址发给局域网内的队友"></span>
+      <button id="btn-history" class="btn">历史</button>
+      <button id="btn-settings" class="btn">设置</button>
       <button id="btn-add" class="btn primary">＋ 添加 Boss</button>
     </div>
   </header>
@@ -66,6 +68,9 @@
         <label>备注（可选）
           <textarea id="f-notes" maxlength="1000" rows="2" placeholder="蹲守注意事项等"></textarea>
         </label>
+        <label>OCR 识别关键词（可选，逗号分隔）
+          <input type="text" id="f-ocr-keywords" maxlength="200" placeholder="如：末影龙,击杀 —— 屏幕出现任一词即自动标记击杀">
+        </label>
 
         <div class="modal-actions">
           <button type="button" class="btn" data-close>取消</button>
@@ -87,6 +92,84 @@
       <div class="modal-actions">
         <button type="button" class="btn" data-close>取消</button>
         <button type="button" id="btn-kill-confirm" class="btn danger">确认击杀</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置弹窗 -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2>设置</h2>
+      <p class="settings-note">以下为本机功能配置，默认全部关闭；队友机器上的设置相互独立。</p>
+
+      <fieldset class="settings-group">
+        <legend>OCR 自动识别击杀</legend>
+        <label class="check"><input type="checkbox" id="s-ocr-enabled"> 开启（截屏识别屏幕文字，命中关键词自动标记击杀）</label>
+        <div class="two-col">
+          <label>引擎
+            <select id="s-ocr-engine">
+              <option value="windows">Windows 自带（快，占用低）</option>
+              <option value="rapidocr">RapidOCR（更准，占用高）</option>
+            </select>
+          </label>
+          <label>识别间隔（秒）
+            <input type="number" id="s-ocr-interval" min="1" max="60" step="1">
+          </label>
+        </div>
+        <div class="two-col">
+          <label>触发方式
+            <select id="s-ocr-mode">
+              <option value="auto">自动标记击杀</option>
+              <option value="confirm">仅提醒，待确认</option>
+            </select>
+          </label>
+          <label>冷却（秒）
+            <input type="number" id="s-ocr-cooldown" min="5" max="3600" step="5">
+          </label>
+        </div>
+        <label>监测区域
+          <span id="s-ocr-region" class="region-text"></span>
+        </label>
+        <p class="settings-note">区域在悬浮窗 ⚙ → OCR → 框选区域 里设置（如左下角聊天栏）；关键词在编辑每个 Boss 时配置。</p>
+        <button type="button" id="btn-ocr-test" class="btn small">立即试一次识别</button>
+        <span id="ocr-test-result" class="ocr-test-result"></span>
+      </fieldset>
+
+      <fieldset class="settings-group">
+        <legend>复活到点提醒</legend>
+        <label class="check"><input type="checkbox" id="s-notify-enabled"> 开启</label>
+        <label class="check"><input type="checkbox" id="s-notify-sound"> 提示音</label>
+        <label class="check"><input type="checkbox" id="s-notify-toast"> Windows 系统通知</label>
+        <label class="check"><input type="checkbox" id="s-notify-banner"> 悬浮窗提醒条</label>
+        <label>区间 Boss 提醒时机
+          <select id="s-notify-range">
+            <option value="both">区间两端都提醒</option>
+            <option value="earliest">仅最早复活时间</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <div class="modal-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="button" id="btn-settings-save" class="btn primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 历史弹窗 -->
+  <div id="history-modal" class="modal hidden">
+    <div class="modal-box wide">
+      <h2>击杀历史</h2>
+      <div id="history-stats" class="history-stats"></div>
+      <div class="history-table-wrap">
+        <table class="history-table">
+          <thead><tr><th>时间</th><th>Boss</th><th>来源</th></tr></thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="btn-history-clear" class="btn danger">清空历史</button>
+        <button type="button" class="btn" data-close>关闭</button>
       </div>
     </div>
   </div>

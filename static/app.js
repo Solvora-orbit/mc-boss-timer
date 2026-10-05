@@ -69,6 +69,7 @@ function render() {
     if (b.location) meta.push(`<div>位置：<b>${esc(b.location)}</b></div>`);
     if (b.drops) meta.push(`<div>掉落：<b>${esc(b.drops)}</b></div>`);
     if (b.notes) meta.push(`<div>备注：<b>${esc(b.notes)}</b></div>`);
+    if (b.ocr_keywords) meta.push(`<div>OCR关键词：<span class="keyword-tag">${esc(b.ocr_keywords)}</span></div>`);
     if (b.last_kill_at) meta.push(`<div>击杀时间：${fmtClock(b.last_kill_at)}</div>`);
 
     return `
@@ -155,6 +156,7 @@ function openBossModal(boss = null) {
   $("#f-location").value = boss ? boss.location : "";
   $("#f-drops").value = boss ? boss.drops : "";
   $("#f-notes").value = boss ? boss.notes : "";
+  $("#f-ocr-keywords").value = boss ? (boss.ocr_keywords || "") : "";
   syncModeUI();
   $("#boss-modal").classList.remove("hidden");
   $("#f-name").focus();
@@ -175,6 +177,7 @@ async function submitBossForm(e) {
     location: $("#f-location").value.trim(),
     drops: $("#f-drops").value.trim(),
     notes: $("#f-notes").value.trim(),
+    ocr_keywords: $("#f-ocr-keywords").value.trim(),
   };
   if (mode === "fixed") {
     body.respawn_minutes = parseFloat($("#f-minutes").value);
@@ -245,9 +248,104 @@ function closeModals() {
   killTargetId = null;
 }
 
+/* ---------- 设置弹窗 ---------- */
+
+async function openSettingsModal() {
+  try {
+    const s = await api("/api/settings");
+    $("#s-ocr-enabled").checked = s.ocr.enabled;
+    $("#s-ocr-engine").value = s.ocr.engine;
+    $("#s-ocr-interval").value = s.ocr.interval;
+    $("#s-ocr-mode").value = s.ocr.mode;
+    $("#s-ocr-cooldown").value = s.ocr.cooldown;
+    const r = s.ocr.region;
+    $("#s-ocr-region").textContent = r ? `x=${r.x}, y=${r.y}, ${r.w}×${r.h}` : "全屏（在悬浮窗⚙里框选）";
+    $("#s-notify-enabled").checked = s.notify.enabled;
+    $("#s-notify-sound").checked = s.notify.sound;
+    $("#s-notify-toast").checked = s.notify.toast;
+    $("#s-notify-banner").checked = s.notify.banner;
+    $("#s-notify-range").value = s.notify.range_mode;
+    $("#ocr-test-result").textContent = "";
+    $("#settings-modal").classList.remove("hidden");
+  } catch (err) { alert(err.message); }
+}
+
+async function saveSettings() {
+  const patch = {
+    ocr: {
+      enabled: $("#s-ocr-enabled").checked,
+      engine: $("#s-ocr-engine").value,
+      interval: Math.max(1, parseInt($("#s-ocr-interval").value) || 3),
+      mode: $("#s-ocr-mode").value,
+      cooldown: Math.max(5, parseInt($("#s-ocr-cooldown").value) || 60),
+    },
+    notify: {
+      enabled: $("#s-notify-enabled").checked,
+      sound: $("#s-notify-sound").checked,
+      toast: $("#s-notify-toast").checked,
+      banner: $("#s-notify-banner").checked,
+      range_mode: $("#s-notify-range").value,
+    },
+  };
+  try {
+    await api("/api/settings", "PUT", patch);
+    closeModals();
+  } catch (err) { alert(err.message); }
+}
+
+async function ocrTestOnce() {
+  const el = $("#ocr-test-result");
+  el.textContent = "识别中…";
+  try {
+    const res = await api("/api/watcher/test", "POST");
+    if (res.error) { el.textContent = `未执行：${res.error}`; return; }
+    el.textContent = res.hits && res.hits.length
+      ? `识别：${res.text.slice(0, 60)}　命中：${res.hits.join("、")}`
+      : `识别：${(res.text || "（无文字）").slice(0, 60)}`;
+  } catch (err) { el.textContent = `失败：${err.message}`; }
+}
+
+/* ---------- 历史弹窗 ---------- */
+
+const SOURCE_LABEL = { manual: "手动", hotkey: "热键", ocr: "OCR" };
+
+async function openHistoryModal() {
+  try {
+    const data = await api("/api/history?limit=200");
+    const stats = $("#history-stats");
+    const statItems = Object.entries(data.stats).map(([id, st]) => {
+      const boss = bosses.find((b) => b.id === id);
+      const avg = st.avg_interval != null ? `平均 ${Math.round(st.avg_interval / 60)} 分一轮` : "";
+      return `<span class="stat"><b>${esc(boss ? boss.name : "?")}</b> ${st.count} 次 ${avg}</span>`;
+    });
+    stats.innerHTML = statItems.join("") || `<span class="stat">暂无击杀记录</span>`;
+
+    $("#history-body").innerHTML = data.entries.map((e) => {
+      const boss = bosses.find((b) => b.id === e.boss_id);
+      return `<tr>
+        <td>${fmtClock(e.kill_at)}</td>
+        <td>${esc(boss ? boss.name : e.boss_name)}</td>
+        <td><span class="source-badge source-${e.source}">${SOURCE_LABEL[e.source] || e.source}</span></td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="3" style="color:var(--text-dim)">还没有击杀记录，标记一次击杀试试</td></tr>`;
+    $("#history-modal").classList.remove("hidden");
+  } catch (err) { alert(err.message); }
+}
+
+async function clearHistory() {
+  if (!confirm("确定清空全部击杀历史？")) return;
+  try { await api("/api/history", "DELETE"); openHistoryModal(); }
+  catch (err) { alert(err.message); }
+}
+
 /* ---------- 事件绑定 ---------- */
 
 $("#btn-add").addEventListener("click", () => openBossModal());
+$("#btn-settings").addEventListener("click", openSettingsModal);
+$("#btn-settings-save").addEventListener("click", saveSettings);
+$("#btn-ocr-test").addEventListener("click", ocrTestOnce);
+$("#btn-history").addEventListener("click", openHistoryModal);
+$("#btn-history-clear").addEventListener("click", clearHistory);
 $("#boss-form").addEventListener("submit", submitBossForm);
 $("#btn-kill-confirm").addEventListener("click", confirmKill);
 document.querySelectorAll('input[name="f-mode"]').forEach((r) => r.addEventListener("change", syncModeUI));

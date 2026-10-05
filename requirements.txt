@@ -1,3 +1,9 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
+mss>=9.0
+keyboard>=0.13.5
+winocr>=0.0.15
+winrt-Windows.UI.Notifications
+winrt-Windows.Data.Xml.Dom
+rapidocr-onnxruntime>=1.2.3
 pyinstaller>=6.0 ; sys_platform == 'win32'

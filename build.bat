@@ -9,6 +9,11 @@ if not exist .venv\Scripts\pyinstaller.exe (
 .venv\Scripts\pyinstaller --onefile --noconfirm --clean ^
     --name MCBossTimer ^
     --add-data "static;static" ^
+    --collect-all rapidocr_onnxruntime ^
+    --collect-submodules winrt ^
+    --hidden-import winocr ^
+    --hidden-import keyboard ^
+    --hidden-import mss ^
     run.py
 if errorlevel 1 (
     echo [错误] 打包失败

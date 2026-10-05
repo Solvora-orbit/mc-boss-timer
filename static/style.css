@@ -217,3 +217,49 @@ main { padding: 22px; max-width: 1200px; margin: 0 auto; }
 .hidden { display: none !important; }
 
 #kill-custom-time { margin-bottom: 12px; }
+
+/* 设置与历史 */
+.settings-group {
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px 12px;
+}
+.settings-group legend { color: var(--blue); font-size: 13px; padding: 0 6px; }
+.settings-group .check {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--text); margin-bottom: 8px; cursor: pointer;
+}
+.settings-group .check input { margin: 0; }
+.settings-group select {
+  width: 100%; margin-top: 4px; background: var(--bg);
+  border: 1px solid var(--panel-border); border-radius: 6px;
+  color: var(--text); padding: 6px 8px; font-size: 13px;
+}
+.settings-note { font-size: 12px; color: var(--text-dim); margin: 4px 0 8px; line-height: 1.5; }
+.region-text { color: var(--orange); font-family: Consolas, monospace; }
+.ocr-test-result { font-size: 12px; color: var(--text-dim); margin-left: 8px; }
+
+.modal-box.wide { max-width: 640px; }
+.history-stats {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;
+}
+.history-stats .stat {
+  background: var(--bg); border: 1px solid var(--panel-border);
+  border-radius: 8px; padding: 6px 10px; font-size: 12px; color: var(--text-dim);
+}
+.history-stats .stat b { color: var(--text); font-weight: normal; }
+.history-table-wrap {
+  max-height: 320px; overflow-y: auto;
+  border: 1px solid var(--panel-border); border-radius: 8px;
+}
+.history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.history-table th, .history-table td {
+  text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--panel-border);
+}
+.history-table th { color: var(--text-dim); font-weight: normal; position: sticky; top: 0; background: var(--panel); }
+.source-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; }
+.source-manual { background: rgba(139,147,163,.15); color: var(--text-dim); }
+.source-hotkey { background: rgba(66,165,245,.15); color: var(--blue); }
+.source-ocr { background: rgba(255,152,0,.15); color: var(--orange); }
+.keyword-tag { font-size: 11px; color: var(--orange); }
